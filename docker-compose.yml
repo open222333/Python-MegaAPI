@@ -1,0 +1,6 @@
+version: "3"
+services:
+  sample:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.test
