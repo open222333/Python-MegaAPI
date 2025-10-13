@@ -1,6 +1,18 @@
-version: "3"
+version: "3.9"
+
 services:
-  sample:
+  megaapi:
     build:
-      context: .
-      dockerfile: docker/Dockerfile.test
+      context: .                # 指向專案根目錄
+      dockerfile: docker/Dockerfile  # 指定 Dockerfile 的路徑
+    container_name: megaapi
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Taipei
+      - LOG_LEVEL=DEBUG
+    volumes:
+      - ./conf:/app/conf        # 保留設定檔
+      - ./logs:/app/logs        # 保留日誌
+    command: ["python", "main.py"]
+    # ports:
+    #   - "8000:8000"

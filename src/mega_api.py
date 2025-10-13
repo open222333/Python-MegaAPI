@@ -1,6 +1,8 @@
 import base64
 import requests
 import logging
+import random
+import json
 import os
 from logging.handlers import RotatingFileHandler
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -84,23 +86,24 @@ def aes_ecb_encrypt(data: bytes, key):
 # ============================================================
 
 
-def prepare_key(password):
+def prepare_key(password: str):
     """
-    根據使用者密碼計算 MEGA Master Key。
-    流程：
-    1. 將密碼轉為 32-bit 陣列
-    2. 以固定初始金鑰 XOR 疊代 65536 次
-    3. 每次疊代後再用 AES-ECB 加密一次
-    這個過程相當於一種 key derivation function (KDF)
+    由密碼字串導出 master key
+    參考 MEGA SDK: password → AES key
     """
-    p = str_to_a32(password.encode())
-    key = [0x93c467e3, 0x7db0c7a4, 0xd1be3f81, 0x0152cb56]
-    for _ in range(65536):  # 重複 65536 次以增加暴力破解成本
-        for i in range(0, len(p), 4):
-            # XOR 合併目前的 key 與密碼區塊
-            key = [x ^ y for x, y in zip(key, p[i:i + 4])]
-            # 使用 AES 再加密一次（以 [0,0,0,0] 為固定 key）
-            key = str_to_a32(aes_cbc_encrypt(a32_to_str(key), [0, 0, 0, 0]))
+    password_bytes = password.encode('utf-8')
+    key = [0x93C467E3, 0x7DB0C7A4, 0xD1BE3F81, 0x0152CB56]  # 初始固定 key
+    aes = None
+
+    for _ in range(0x10000):  # 65536 次
+        for i in range(0, len(password_bytes), 16):
+            block = password_bytes[i:i+16]
+            if len(block) < 16:
+                block += b'\0' * (16 - len(block))
+
+            aes = Cipher(algorithms.AES(a32_to_str(key)), modes.ECB()).encryptor()
+            key = str_to_a32(aes.update(block))
+
     return key
 
 # ============================================================
@@ -111,47 +114,37 @@ def prepare_key(password):
 def stringhash(email, key):
     """
     計算登入所需的雜湊值 (uh)
-    MEGA 用 email 與導出的 master key 產生一個 AES 雜湊。
+    依 MEGA API 登入邏輯：
+    - email 轉小寫
+    - 以 key 為 AES-ECB 金鑰
+    - 對 email 反覆加密 16384 次
+    - 最後取 h[0], h[2] 組成結果
     """
-    email_bytes = email.encode()
+    email_bytes = email.lower().encode()
     aes = Cipher(algorithms.AES(a32_to_str(key)), modes.ECB()).encryptor()
 
-    # 初始雜湊值為 4 個 32-bit 整數（共 16 bytes）
+    # 初始 4 個 32-bit 整數（16 bytes）
     h = [0, 0, 0, 0]
 
-    # 每 16 bytes email 做一個 block 加密
+    # 每 16 bytes 一個 block
     for i in range(0, len(email_bytes), 16):
         block = email_bytes[i:i + 16]
-        # 不足 16 bytes 的部分補 0
         if len(block) < 16:
             block += b'\0' * (16 - len(block))
 
-        # XOR 合併目前雜湊
+        # XOR 合併進 h
         for j in range(4):
             h[j] ^= int.from_bytes(block[j*4:j*4+4], 'big')
 
-        # 將 XOR 結果再加密一次
+    # 重複加密 16384 次
+    for _ in range(0x4000):  # 16384
         h = str_to_a32(aes.update(a32_to_str(h)))
 
-    out = a32_to_str(h)
-    # 回傳 Base64 URL 安全格式（取前 16 bytes）
-    return base64url_encode(out[:16])
+    # 最後取 h[0] 與 h[2]
+    out = a32_to_str([h[0], h[2]])
 
-# ============================================================
-# API 通用請求函式
-# ============================================================
-
-
-def mega_api_request(data):
-    """
-    傳送 JSON-RPC API 請求到 MEGA。
-    參數 data 應該是一個 dict，例如：{"a":"uq"}
-    """
-    url = "https://g.api.mega.co.nz/cs"
-    # 注意：MEGA API 要求 JSON body 是陣列格式
-    res = requests.post(url, json=[data])
-    # 回傳第一個結果
-    return res.json()[0]
+    # 回傳 base64url 安全格式
+    return base64url_encode(out)
 
 # ============================================================
 # 登入主程式
@@ -160,27 +153,92 @@ def mega_api_request(data):
 
 class Mega:
 
-    def __init__(self, email, password, name='MegaAPI'):
+    def __init__(self,
+                 email,
+                 password,
+                 name='MegaAPI',
+                 log_max_bytes=10*1024*1024,
+                 log_backup_count=5,
+                 log_level="DEBUG"):
         os.makedirs('logs', exist_ok=True)
 
+        # 建立 logger
         self.logger = logging.getLogger(name)
-        log_handler = RotatingFileHandler(
-            os.path.join('logs', f"{name}.log"),
-            maxBytes=10 * 1024 * 1024,  # 10 MB
-            backupCount=5,
+        self.logger.setLevel(getattr(logging, log_level.upper()))
+        self.logger.propagate = False  # 避免重複輸出
+
+        # === 檔案輸出 handler (只記錄 ERROR 以上) ===
+        log_path = os.path.join('logs', f"{name}.log")
+        file_handler = RotatingFileHandler(
+            log_path,
+            maxBytes=log_max_bytes,
+            backupCount=log_backup_count,
             encoding='utf-8'
         )
-        log_formatter = logging.Formatter(
+        file_handler.setLevel(logging.ERROR)  # 只記錄 ERROR+
+
+        # === 終端機輸出 handler ===
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(getattr(logging, log_level.upper()))
+
+        # === 統一格式 ===
+        formatter = logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         )
-        log_handler.setFormatter(log_formatter)
-        self.logger.addHandler(log_handler)
-        self.logger.setLevel(logging.INFO)
+        file_handler.setFormatter(formatter)
+        console_handler.setFormatter(formatter)
+
+        # === 加入 handler ===
+        self.logger.addHandler(file_handler)
+        self.logger.addHandler(console_handler)
 
         self.email = email
         self.password = password
         self.session = self.mega_login(email, password)
         self.sid = self.session.get("csid") if self.session else None
+
+    # ============================================================
+    # API 通用請求函式
+    # ============================================================
+
+    def mega_api_request(self, data, base_url="https://g.api.mega.co.nz/cs"):
+        """向 MEGA API 發送請求"""
+        if not isinstance(data, list):
+            data = [data]
+
+        payload = json.dumps(data)
+        headers = {"Content-Type": "application/json"}
+        # MEGA 的 /cs API 必須包含一個隨機 id 參數
+        params = {"id": random.randint(0, 0xFFFFFFFF)}
+
+        try:
+            res = requests.post(
+                base_url,
+                params=params,
+                data=payload,
+                headers=headers, timeout=15
+            )
+
+            # Debug 輸出非 JSON 回應
+            if res.status_code != 200:
+                error_msg = res.text.strip() or "<no response body>"
+                self.logger.error(f"HTTP {res.status_code}: {error_msg}")
+                self.logger.debug(f"HTTP {res.status_code}: {error_msg} | URL={base_url} | Payload={data}")
+                raise Exception(f"MEGA API error: HTTP {res.status_code} - {error_msg}")
+
+            # 確認回應內容是否為 JSON
+            try:
+                json_data = res.json()
+            except json.JSONDecodeError:
+                self.logger.error(
+                    f"Non-JSON response: {res.text[:200]}")  # 只顯示前 200 字
+                raise Exception("Invalid JSON response from MEGA API")
+
+            return json_data[0] if json_data else None
+
+        except requests.exceptions.RequestException as e:
+            self.logger.exception("MEGA API connection failed")
+            raise e
 
     # ------------------------------------------------------
     # 登入方法
@@ -195,8 +253,9 @@ class Mega:
         """
         key = prepare_key(password)
         uh = stringhash(email.lower(), key)
+        self.logger.debug(f"Login hash (uh): {uh}")
         data = {"a": "us", "user": email, "uh": uh}
-        result = mega_api_request(data)
+        result = self.mega_api_request(data)
 
         if isinstance(result, dict) and "csid" in result:
             self.logger.info(f"登入成功！Session ID: {result['csid']}")
@@ -217,7 +276,7 @@ class Mega:
             return None
 
         data = {"a": "f", "c": 1}  # "f" = files, "c"=1 表示要返回整個目錄結構
-        result = mega_api_request(data, self.sid)
+        result = self.mega_api_request(data, self.sid)
 
         if isinstance(result, dict) and "f" in result:
             files = result["f"]
@@ -253,7 +312,7 @@ class Mega:
             "t": folder_node or "n"  # 目標資料夾 (預設根目錄)
         }
 
-        result = mega_api_request(data, self.sid)
+        result = self.mega_api_request(data, self.sid)
         if not isinstance(result, str):
             self.logger.error(f"初始化上傳失敗: {result}")
             return None
@@ -284,7 +343,7 @@ class Mega:
             return None
 
         data = {"a": "d", "n": node_id}
-        result = mega_api_request(data, self.sid)
+        result = self.mega_api_request(data, self.sid)
 
         if result == 0:
             self.logger.info(f"檔案刪除成功：{node_id}")

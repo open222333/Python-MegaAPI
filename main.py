@@ -10,33 +10,35 @@ if __name__ == '__main__':
     parser = ArgumentParser(description='MegaAPI 指令列介面')
     config_group = parser.add_argument_group("config", "設定相關參數")
     config_group.add_argument('--config_path', type=str,
-                        default=os.path.join('conf', 'config.ini'),
-                        help='路徑至設定檔（預設：conf/config.ini）')
+                              default=os.path.join('conf', 'config.ini'),
+                              help='路徑至設定檔（預設：conf/config.ini）')
     log_group = parser.add_argument_group("log", "日誌相關參數")
     log_group.add_argument('--log_path', type=str,
-                        default=os.path.join('logs', 'MegaAPI.log'),
-                        help='路徑至日誌檔（預設：logs/MegaAPI.log）')
+                           default=os.path.join('logs', 'MegaAPIMain.log'),
+                           help='路徑至日誌檔（預設：logs/MegaAPIMain.log）')
     log_group.add_argument('--log_level', type=str,
-                        choices=['DEBUG', 'INFO',
-                                 'WARNING', 'ERROR', 'CRITICAL'],
-                        default='DEBUG',
-                        help='日誌等級（預設：DEBUG）')
+                           choices=['DEBUG', 'INFO',
+                                    'WARNING', 'ERROR', 'CRITICAL'],
+                           default='DEBUG',
+                           help='日誌等級（預設：DEBUG）')
     log_group.add_argument('--no_console', action='store_true',
-                        help='不輸出日誌至控制台')
+                           help='不輸出日誌至控制台')
     log_group.add_argument('--no_file', action='store_true',
-                        help='不輸出日誌至檔案')
+                           help='不輸出日誌至檔案')
     log_group.add_argument('--max_bytes', type=int,
-                        default=10 * 1024 * 1024,
-                        help='單一日誌檔最大位元組數（預設：10MB）')
+                           default=10 * 1024 * 1024,
+                           help='單一日誌檔最大位元組數（預設：10MB）')
     log_group.add_argument('--backup_count', type=int,
-                        default=5,
-                        help='保留的舊日誌檔案數量（預設：5）')
+                           default=5,
+                           help='保留的舊日誌檔案數量（預設：5）')
 
     args = parser.parse_args()
 
     logger = logging.getLogger('MegaAPIMain')
     logger.setLevel(getattr(logging, args.log_level))
-    log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    log_formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger.propagate = False
 
     if not args.no_file:
         log_path = os.path.abspath(args.log_path)
@@ -48,6 +50,8 @@ if __name__ == '__main__':
             encoding='utf-8'
         )
         file_handler.setFormatter(log_formatter)
+        # 只記錄 ERROR+
+        file_handler.setLevel(logging.ERROR)
         logger.addHandler(file_handler)
         logger.info(f"日誌將輸出到檔案：{log_path}")
 
@@ -75,7 +79,13 @@ if __name__ == '__main__':
     ACCOUNT = conf.get('MEGA', 'ACCOUNT', fallback=None)
     PASSWORD = conf.get('MEGA', 'PASSWORD', fallback=None)
 
-    mega = Mega(ACCOUNT, PASSWORD)
+    mega = Mega(
+        email=ACCOUNT,
+        password=PASSWORD,
+        log_level=args.log_level,
+        log_max_bytes=args.max_bytes,
+        log_backup_count=args.backup_count
+    )
     files = mega.list_files()
     if files is not None:
         for file in files:
