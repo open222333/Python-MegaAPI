@@ -34,7 +34,7 @@ def base64url_encode(data):
 # ============================================================
 
 
-def str_to_a32(s):
+def str_to_a32(b):
     """
     將位元組字串轉成 32-bit 整數陣列。
     例如：b'ABCDEFGH' -> [0x41424344, 0x45464748]
@@ -42,14 +42,22 @@ def str_to_a32(s):
     將 bytes 轉換成 32-bit 整數陣列 (每 4 bytes 一組)
     """
     # 確保長度是 4 的倍數（使用 b'\0' 填充）
-    s += b'\0' * (-len(s) % 4)
-    return [int.from_bytes(s[i:i + 4], 'big') for i in range(0, len(s), 4)]
-
+    if len(b) % 4:
+        b += b'\0' * (4 - len(b) % 4)
+    return [int.from_bytes(b[i:i+4], 'big') for i in range(0, len(b), 4)]
 
 def a32_to_str(a):
     """
     將 32-bit 整數陣列轉回位元組字串。
     例如：[0x41424344, 0x45464748] -> b'ABCDEFGH'
+    """
+    # return b''.join(x.to_bytes(4, 'big') for x in a)
+    return a32_to_bytes(a)  # 同樣的 bytes 表示
+
+
+def a32_to_bytes(a):
+    """
+    將 32-bit 整數陣列轉回位元組字串（與 a32_to_str 相同）
     """
     return b''.join(x.to_bytes(4, 'big') for x in a)
 
@@ -79,6 +87,21 @@ def aes_ecb_encrypt(data: bytes, key):
         data += b'\0' * (16 - len(data) % 16)
 
     return encryptor.update(data) + encryptor.finalize()
+
+
+def aes_encrypt_block(h32, aesKey):
+    """
+    將 h32（4 個 32-bit 值）當作 16 bytes 輸入，用 aesKey 加密後回傳新的 h32。
+    """
+    # 先把 h32 → bytes
+    data = a32_to_bytes(h32)
+    # 確保 block 是 16 bytes
+    # (h32 四個整數本來就是 16 bytes)
+    cipher = Cipher(algorithms.AES(a32_to_bytes(aesKey)), modes.ECB())
+    encryptor = cipher.encryptor()
+    encrypted = encryptor.update(data) + encryptor.finalize()
+    # 再轉回 a32
+    return str_to_a32(encrypted)
 
 
 # ============================================================
@@ -120,31 +143,29 @@ def stringhash(email, key):
     - 對 email 反覆加密 16384 次
     - 最後取 h[0], h[2] 組成結果
     """
-    email_bytes = email.lower().encode()
-    aes = Cipher(algorithms.AES(a32_to_str(key)), modes.ECB()).encryptor()
+    # 1. 將 email 轉小寫並編碼為 bytes
+    email_bytes = email.lower().encode('utf-8')
+    # 2. 將 email_bytes 分段 XOR 進 h32
+    h32 = [0, 0, 0, 0]
+    for i in range(0, len(email_bytes), 4):
+        chunk = email_bytes[i : i+4]
+        # 如果 chunk 少於 4 bytes，補 0
+        if len(chunk) < 4:
+            chunk += b'\0' * (4 - len(chunk))
+        val = int.from_bytes(chunk, 'big')
+        idx = (i // 4) & 3
+        h32[idx] ^= val
 
-    # 初始 4 個 32-bit 整數（16 bytes）
-    h = [0, 0, 0, 0]
+    # 3. 重複 AES 加密流程 16384 次 (0x4000)
+    for _ in range(0x4000):
+        h32 = aes_encrypt_block(h32, key)
 
-    # 每 16 bytes 一個 block
-    for i in range(0, len(email_bytes), 16):
-        block = email_bytes[i:i + 16]
-        if len(block) < 16:
-            block += b'\0' * (16 - len(block))
+    # 4. 最後取 h32[0] 和 h32[2] 作為輸出
+    out_a32 = [h32[0], h32[2]]
+    out_bytes = a32_to_bytes(out_a32)
 
-        # XOR 合併進 h
-        for j in range(4):
-            h[j] ^= int.from_bytes(block[j*4:j*4+4], 'big')
-
-    # 重複加密 16384 次
-    for _ in range(0x4000):  # 16384
-        h = str_to_a32(aes.update(a32_to_str(h)))
-
-    # 最後取 h[0] 與 h[2]
-    out = a32_to_str([h[0], h[2]])
-
-    # 回傳 base64url 安全格式
-    return base64url_encode(out)
+    # 5. Base64 URL 安全編碼並去除 “=” 填充
+    return base64url_encode(out_bytes)
 
 # ============================================================
 # 登入主程式
