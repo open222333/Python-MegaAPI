@@ -3,6 +3,7 @@ import boto3
 from botocore.client import Config
 from datetime import datetime, timezone, timedelta
 from logging.handlers import RotatingFileHandler
+from src.timer import timed
 import logging
 
 
@@ -60,6 +61,7 @@ class MegaS4():
         self.logger.addHandler(file_handler)
         self.logger.addHandler(console_handler)
 
+    @timed(print_result=False)
     def upload_file_to_s4(self, bucket_name, local_file_path, remote_key):
         """上傳本地檔案到 S4 儲存桶。"""
         if not os.path.isfile(local_file_path):

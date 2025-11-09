@@ -4,6 +4,7 @@ from logging.handlers import RotatingFileHandler
 from src.mega_exception import ConfigError
 # from src.mega_api import Mega
 from src.mega_s4 import MegaS4
+from src.timer import human_time_ct_str
 import logging
 import os
 
@@ -47,7 +48,7 @@ if __name__ == '__main__':
                            default=5,
                            help='保留的舊日誌檔案數量（預設：5）')
     test_group = parser.add_argument_group("test", "測試相關參數")
-    test_group.add_argument('--local_test_file', type=str,
+    test_group.add_argument('-lt', '--local_test_file', type=str,
                             default=None,
                             help='本地測試檔案路徑（預設：無）')
 
@@ -164,8 +165,10 @@ if __name__ == '__main__':
         log_backup_count=args.backup_count
     )
 
-    mega.upload_file_to_s4(
+    upload_sec = mega.upload_file_to_s4(
         bucket_name=BUCKET_NAME,
         local_file_path=args.local_test_file,
         remote_key=args.local_test_file
     )
+
+    logger.info(f"上傳完成，花費時間：{human_time_ct_str(upload_sec)}")
