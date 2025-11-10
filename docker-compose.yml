@@ -14,5 +14,3 @@ services:
       - ./conf:/app/conf        # 保留設定檔
       - ./logs:/app/logs        # 保留日誌
     command: ["python", "main.py"]
-    # ports:
-    #   - "8000:8000"

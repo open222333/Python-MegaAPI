@@ -1,4 +1,3 @@
-from botocore.client import Config
 from botocore.exceptions import ClientError, BotoCoreError
 from logging.handlers import RotatingFileHandler
 from src.base_storage_client import BaseStorageClient
@@ -9,29 +8,26 @@ import logging
 import os
 
 
-class MegaS4(BaseStorageClient):
-    """ Mega S4 客戶端，用於上傳、下載及刪除檔案。 """
+class AmazonS3(BaseStorageClient):
+    """ Amazon S3 客戶端，用於下載及刪除檔案。 """
 
-    def __init__(self, access_key, secret_key, endpoint_url, region_name, name="MegaS4Client", log_level="INFO", log_max_bytes=5*1024*1024, log_backup_count=3):
-        """ 初始化 Mega S4 客戶端。
+    def __init__(
+            self, aws_access_key_id: str, aws_secret_access_key: str, aws_session_token: str, region: str, name="AmazonS3", log_level="INFO", log_max_bytes=5*1024*1024, log_backup_count=3):
+        """
+        初始化 S3Downloader。
 
-        Args:
-            access_key (str): S4 存取金鑰。
-            secret_key (str): S4 秘密金鑰。
-            endpoint_url (str): S4 端點 URL。 範例 "https://s3.g.s4.mega.io"。
-            region_name (str): S4 區域名稱。 範例 "g"。
-            name (str): 日誌記錄器名稱。 預設為 "MegaS4Client"。
-            log_level (str): 日誌等級。 預設為 "INFO"。
-            log_max_bytes (int): 單一日誌檔最大位元組數。 預設為 5MB。
-            log_backup_count (int): 保留的舊日誌檔案數量。 預設為 3。
+        參數：
+            aws_access_key_id : AWS Access Key ID
+            aws_secret_access_key : AWS Secret Access Key
+            aws_session_token : 可選 Session Token（例如臨時憑證）
+            region : AWS 區域名稱
         """
         self.client = boto3.client(
             "s3",
-            aws_access_key_id=access_key,
-            aws_secret_access_key=secret_key,
-            endpoint_url=endpoint_url,
-            region_name=region_name,
-            config=Config(signature_version='s3v4')
+            aws_access_key_id=aws_access_key_id,
+            aws_secret_access_key=aws_secret_access_key,
+            aws_session_token=aws_session_token,
+            region_name=region,
         )
 
         # 建立 logger
@@ -65,44 +61,35 @@ class MegaS4(BaseStorageClient):
         self.logger.addHandler(console_handler)
 
     @timed(print_result=False)
-    def upload_file(self, bucket_name, local_file_path, remote_key, show_progress=True) -> bool:
-        """上傳本地檔案到 S4 儲存桶（含進度列）。
+    def upload_file(self, bucket_name, remote_key, local_file_path, show_progress=True) -> bool:
+        """上傳檔案到 S3（含進度列）。
 
         參數：
-            bucket_name : S4 Bucket 名稱
+            bucket_name : S3 Bucket 名稱
             local_file_path : 本地檔案路徑
-            remote_key : 檔案在 S4 上的路徑
+            remote_key : 檔案在 S3 上的路徑
             show_progress : 是否顯示上傳進度列
-        回傳：
-            True  -> 上傳成功
-            False -> 上傳失敗
         """
         try:
             if not os.path.isfile(local_file_path):
-                raise FileNotFoundError(f"本地檔案不存在: {local_file_path}")
+                raise FileNotFoundError(f"找不到本地檔案: {local_file_path}")
 
             file_size = os.path.getsize(local_file_path)
             self.logger.info(
-                f"上傳中 {local_file_path} → s4://{bucket_name}/{remote_key} "
-                f"({file_size / 1024 / 1024:.2f} MB)"
+                f"上傳中 {local_file_path} → s3://{bucket_name}/{remote_key} ({file_size / 1024 / 1024:.2f} MB)"
             )
 
-            # 顯示 tqdm 進度列
             with tqdm(
                 total=file_size,
                 unit="B",
                 unit_scale=True,
-                unit_divisor=1024,
                 desc=f"上傳中：{os.path.basename(local_file_path)}",
-                ascii=True,
                 disable=not show_progress,
             ) as pbar:
 
                 def progress_hook(bytes_amount):
-                    """每次上傳一個 chunk 時被呼叫。"""
                     pbar.update(bytes_amount)
 
-                # 使用 boto3 的 Callback 參數
                 self.client.upload_file(
                     local_file_path,
                     bucket_name,
@@ -112,9 +99,9 @@ class MegaS4(BaseStorageClient):
 
             self.logger.info(f"已上傳: {local_file_path} → s3://{bucket_name}/{remote_key}")
             return True
-
+        
         except (ClientError, BotoCoreError) as e:
-            self.logger.error(f"S4 上傳失敗：{e}")
+            self.logger.error(f"S3 上傳失敗：{e}")
             return False
         except Exception as e:
             self.logger.error(f"未預期錯誤：{e}")
@@ -122,23 +109,25 @@ class MegaS4(BaseStorageClient):
 
     @timed(print_result=False)
     def download_file(self, bucket_name, remote_key, local_file_path, show_progress=True) -> bool:
-        """從 S4 下載檔案至本地端（含進度列）。
+        """
+        下載 S3 檔案到指定路徑。
 
         參數：
-            bucket_name : S4 Bucket 名稱
-            remote_key : 檔案在 S4 上的路徑
-            local_file_path : 本地儲存檔案完整路徑
+            bucket_name : S3 Bucket 名稱
+            remote_key : 檔案在 S3 上的路徑
+            local_file_path : 本地儲存檔案的完整路徑
             show_progress : 是否顯示下載進度列
+
         回傳：
-            True  -> 下載成功
-            False -> 下載失敗
+            True  -> 成功
+            False -> 失敗
         """
         try:
             # 取得檔案大小
             meta = self.client.head_object(Bucket=bucket_name, Key=remote_key)
             total_length = meta.get("ContentLength", 0)
 
-            # 建立本地資料夾
+            # 建立目錄
             os.makedirs(os.path.dirname(local_file_path), exist_ok=True)
 
             # 開始下載
@@ -147,9 +136,7 @@ class MegaS4(BaseStorageClient):
                     total=total_length,
                     unit="B",
                     unit_scale=True,
-                    unit_divisor=1024,
                     desc=f"下載中：{os.path.basename(local_file_path)}",
-                    ascii=True,
                     disable=not show_progress,
                 ) as pbar:
                     self.client.download_fileobj(
@@ -159,59 +146,70 @@ class MegaS4(BaseStorageClient):
                         Callback=lambda bytes_transferred: pbar.update(bytes_transferred),
                     )
 
-            self.logger.info(f"已下載：s3://{bucket_name}/{remote_key} → {local_file_path}")
+            self.logger.info(f"下載完成：{local_file_path}")
             return True
 
         except (ClientError, BotoCoreError) as e:
-            self.logger.error(f"下載失敗：{remote_key}，原因：{e}")
+            self.logger.error(f"S3 下載失敗：{e}")
             return False
         except Exception as e:
             self.logger.error(f"未預期錯誤：{e}")
             return False
 
     def delete_file(self, bucket_name, remote_key) -> bool:
-        """刪除 S4 上指定的單一檔案。
+        """刪除 S3 上指定的單一檔案。
 
         參數：
-            bucket_name : S4 Bucket 名稱
-            remote_key : 檔案在 S4 上的路徑
+            bucket_name : S3 Bucket 名稱
+            remote_key : 檔案在 S3 上的路徑
         """
         try:
             self.client.delete_object(Bucket=bucket_name, Key=remote_key)
-            self.logger.info(f"已刪除檔案：s4://{bucket_name}/{remote_key}")
+            self.logger.info(f"已刪除檔案：s3://{bucket_name}/{remote_key}")
             return True
         except Exception as e:
             self.logger.error(f"刪除失敗：{remote_key}，原因：{e}")
             return False
 
     def exists(self, bucket_name, remote_key) -> bool:
-        """檢查 Mega 檔案是否存在
-
+        """檢查 S3 檔案是否存在。
         參數：
-            bucket_name : S4 Bucket 名稱
-            remote_key : 檔案在 Mega 上的路徑
+            bucket_name : S3 Bucket 名稱
+            remote_key : 檔案在 S3 上的路徑
         回傳：
             True  -> 檔案存在
             False -> 檔案不存在
         """
-        file = self.client.find(remote_key)
-        return bool(file)
+        try:
+            self.client.head_object(Bucket=bucket_name, Key=remote_key)
+            return True
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "404":
+                return False
+            else:
+                self.logger.error(f"檔案不存在：s3://{bucket_name}/{remote_key}，原因：{e}")
+                return None
 
     def list_files(self, bucket_name, prefix="") -> list:
-        """
-        列出 Mega 所有檔案（模擬 prefix）
+        """列出指定 prefix 的所有檔案
 
         參數：
-            bucket_name : S4 Bucket 名稱
+            bucket_name : S3 Bucket 名稱
             prefix : 前綴字串
         回傳：
             符合前綴的檔案清單(list)
         """
         try:
-            all_files = self.client.get_files_in_node(None)  # 取得所有節點檔案
-            matched = [name for name in all_files.keys() if name.startswith(prefix)]
-            self.logger.info(f"列出 {len(matched)} 個檔案 (prefix={prefix})")
-            return matched
+            paginator = self.client.get_paginator("list_objects_v2")
+            page_iterator = paginator.paginate(Bucket=bucket_name, Prefix=prefix)
+
+            all_files = []
+            for page in page_iterator:
+                for obj in page.get("Contents", []):
+                    all_files.append(obj["Key"])
+
+            self.logger.info(f"列出 {len(all_files)} 個檔案 (prefix={prefix})")
+            return all_files
         except Exception as e:
-            self.logger.error(f"列出檔案失敗，原因：{e}")
+            self.logger.error(f"列出檔案失敗 (prefix={prefix})，原因：{e}")
             return []

@@ -44,7 +44,7 @@ def timed(print_result: bool = False):
             end = time.perf_counter()
             elapsed = end - start
             if print_result:
-                print(f"[timed] {func.__name__} took {elapsed:.6f} seconds")
+                print(f"函式 {func.__name__} 執行時間：{elapsed:.6f} 秒")
             # 若原函式有回傳值，回傳 (result, elapsed)
             return (result, elapsed) if result is not None else elapsed
         return wrapper
