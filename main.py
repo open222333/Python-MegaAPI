@@ -119,8 +119,7 @@ def process_file_by_url(url, s4_remote_key, s4_client: MegaS4, s4_bucket, skip_e
         logger (logging.Logger): 日誌記錄器
     """
     # 暫存檔案路徑
-    url 
-    local_path = os.path.join(tmp_dir, os.path.basename(s3_remote_key))
+    local_path = os.path.join(tmp_dir, os.path.basename(s4_remote_key))
     os.makedirs(tmp_dir, exist_ok=True)
 
     try:
