@@ -5,12 +5,13 @@ from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pymongo import MongoClient
 from src.amazon_s3 import AmazonS3
+from src.downloader import Downloader
 from src.exception import DownloadError, UploadError, FileNotFoundError
 from src.mega_s4 import MegaS4
+from src.telegram import send_telegram_message
 from src.timer import human_time_ct_str
 from src.timer import timed
 from src.tool import wait_for_user_confirmation, check_required_vars
-from src.telegram import send_telegram_message
 from tqdm import tqdm
 import logging
 import os
@@ -21,13 +22,15 @@ import os
 
 
 @timed(print_result=False)
-def process_file(file_doc, s3_client: AmazonS3, s4_client: MegaS4, s4_bucket, skip_existing=True, dry_run=False, tmp_dir="temp", show_progress=True, logger: logging.Logger = None) -> bool:
+def process_file(bucket_name, s3_remote_key, s4_remote_key, s3_client: AmazonS3, s4_client: MegaS4, s4_bucket, skip_existing=True, dry_run=False, tmp_dir="temp", show_progress=True, logger: logging.Logger = None) -> bool:
     """
     處理單一檔案：
         Amazon S3 -> 下載到本地 -> 上傳到 Mega S4
 
     參數：
-        file_doc (dict): 包含 s3_bucket 及 s3_key 的檔案文件
+        bucket_name (str): S3 儲存桶名稱
+        s3_remote_key (str): 檔案在 S3 上的路徑
+        s4_remote_key (str): 檔案在 S4 上的路徑
         s3_client (AmazonS3): AmazonS3 客戶端實例
         s4_client (MegaS4): MegaS4 客戶端實例
         s4_bucket (str): MegaS4 儲存桶名稱
@@ -37,63 +40,135 @@ def process_file(file_doc, s3_client: AmazonS3, s4_client: MegaS4, s4_bucket, sk
         show_progress (bool): 是否顯示下載進度條
         logger (logging.Logger): 日誌記錄器
     """
-    bucket_name = file_doc.get("bucket_name")
-    remote_key = file_doc.get("remote_key")
-
-    if not bucket_name or not remote_key:
-        logger.error(f"缺少必要欄位: {file_doc}")
-        return False
-
     # 暫存檔案路徑
-    local_path = os.path.join(tmp_dir, os.path.basename(remote_key))
+    local_path = os.path.join(tmp_dir, os.path.basename(s3_remote_key))
     os.makedirs(tmp_dir, exist_ok=True)
 
     try:
         # 若 S4 已存在，直接略過
         if skip_existing == True:
-            if s4_client.exists(s4_bucket, remote_key):
-                logger.info(f"已存在於 S4，略過：{remote_key}")
+            if s4_client.exists(s4_bucket, s4_remote_key):
+                logger.info(f"已存在於 S4，略過：{s3_remote_key}")
                 return True
 
         # 從 S3 下載
-        logger.info(f"下載中：s3://{bucket_name}/{remote_key}")
+        logger.info(f"下載中：s3://{bucket_name}/{s3_remote_key}")
 
         if dry_run:
-            logger.info(f"[模擬執行] 已下載：s3://{bucket_name}/{remote_key} → {local_path}")
+            logger.info(f"[模擬執行] 已下載：s3://{bucket_name}/{s3_remote_key} → {local_path}")
         else:
             download_result, download_sec = s3_client.download_file(
                 bucket_name=bucket_name,
-                remote_key=remote_key,
+                remote_key=s3_remote_key,
                 local_file_path=local_path,
                 show_progress=show_progress,
             )
 
             if not download_result:
-                raise DownloadError(f"S3 下載失敗：{remote_key}")
+                raise DownloadError(f"S3 下載失敗：{s3_remote_key}")
             else:
                 logger.info(f"下載完成 經過時間: {human_time_ct_str(download_sec)} ")
 
         # 上傳至 S4
-        logger.info(f"上傳中：{remote_key} → S4")
+        logger.info(f"上傳中：{local_path} → {s4_remote_key}")
 
         if dry_run:
-            logger.info(f"[模擬執行] 已上傳: {local_path} → s4://{s4_bucket}/{remote_key}")
+            logger.info(f"[模擬執行] 已上傳: {local_path} → s4://{s4_bucket}/{s4_remote_key}")
         else:
             upload_result, upload_sec = s4_client.upload_file(
                 bucket_name=s4_bucket,
                 local_file_path=local_path,
-                remote_key=remote_key,
+                remote_key=s4_remote_key,
             )
 
             if not upload_result:
-                raise UploadError(f"S4 上傳失敗：{remote_key}")
+                raise UploadError(f"S4 上傳失敗：{local_path} -> {s4_remote_key}")
             else:
                 logger.info(f"上傳完成 經過時間: {human_time_ct_str(upload_sec)} ")
 
         return True
 
     except Exception as e:
-        logger.error(f"處理失敗 {remote_key}：{e}")
+        logger.error(f"處理失敗 {s3_remote_key}：{e}")
+        return False
+    finally:
+        # 清理暫存檔案
+        if os.path.exists(local_path):
+            try:
+                os.remove(local_path)
+                logger.info(f"已刪除暫存檔案：{local_path}")
+            except Exception as e:
+                logger.error(f"無法刪除暫存檔案 {local_path}：{e}")
+
+
+@timed(print_result=False)
+def process_file_by_url(url, s4_remote_key, s4_client: MegaS4, s4_bucket, skip_existing=True, dry_run=False, tmp_dir="temp", show_progress=True, logger: logging.Logger = None) -> bool:
+    """
+    處理單一檔案：
+        Amazon S3 -> 下載到本地 -> 上傳到 Mega S4
+
+    參數：
+        url (str): 檔案 URL
+        s4_remote_key (str): 檔案在 S4 上的路徑
+        s4_client (MegaS4): MegaS4 客戶端實例
+        s4_bucket (str): MegaS4 儲存桶名稱
+        skip_existing (bool): 是否跳過已存在的檔案
+        dry_run (bool): 是否為模擬執行（不進行實際下載或上傳）
+        tmp_dir (str): 暫存目錄路徑
+        show_progress (bool): 是否顯示下載進度條
+        logger (logging.Logger): 日誌記錄器
+    """
+    # 暫存檔案路徑
+    url 
+    local_path = os.path.join(tmp_dir, os.path.basename(s3_remote_key))
+    os.makedirs(tmp_dir, exist_ok=True)
+
+    try:
+        # 若 S4 已存在，直接略過
+        if skip_existing == True:
+            if s4_client.exists(s4_bucket, s4_remote_key):
+                logger.info(f"已存在於 S4，略過：{url}")
+                return True
+
+        # 從 S3 下載
+        logger.info(f"下載中：{url}")
+
+        if dry_run:
+            logger.info(f"[模擬執行] 已下載：{url} → {local_path}")
+        else:
+            downloader = Downloader()
+            download_result, download_sec = downloader.download_file_with_resume(
+                url=url,
+                file_path=local_path,
+                print_bar=show_progress,
+            )
+
+            if not download_result:
+                raise DownloadError(f"S3 下載失敗：{url}")
+            else:
+                logger.info(f"下載完成 經過時間: {human_time_ct_str(download_sec)} ")
+
+        # 上傳至 S4
+        logger.info(f"上傳中：{local_path} → {s4_remote_key}")
+
+        if dry_run:
+            logger.info(f"[模擬執行] 已上傳: {local_path} → s4://{s4_bucket}/{s4_remote_key}")
+        else:
+            upload_result, upload_sec = s4_client.upload_file(
+                bucket_name=s4_bucket,
+                local_file_path=local_path,
+                remote_key=s4_remote_key,
+            )
+
+            if not upload_result:
+                raise UploadError(f"S4 上傳失敗：{local_path} -> {s4_remote_key}")
+            else:
+                logger.info(f"上傳完成 經過時間: {human_time_ct_str(upload_sec)} ")
+
+        return True
+
+    except Exception as e:
+        logger.error(f"處理失敗 {url}：{e}")
         return False
     finally:
         # 清理暫存檔案
@@ -174,6 +249,12 @@ if __name__ == '__main__':
         '--skip_existing',
         action='store_true',
         help='跳過已存在的檔案，不進行下載或上傳'
+    )
+    execution_group.add_argument(
+        '--download_type', type=str,
+        choices=['s3', 'resume'],
+        default='resume',
+        help='下載類型選擇 s3 resume （預設：resume）'
     )
     performance_group = parser.add_argument_group("performance", "效能相關參數")
     performance_group.add_argument(
@@ -285,6 +366,7 @@ if __name__ == '__main__':
     logger.info(f"最大工作緒數：{args.max_workers}")
     logger.info(f"失敗重試次數：{args.max_retries}")
     logger.info(f"每次處理文件數量：{args.per_count}")
+    logger.info(f"下載方式：{"透過 s3 金鑰" if args.download_type == "s3" else '斷點續傳下載'}")
     logger.info("=== MegaS4 設定 ===")
     logger.info(f"MEGA_S4_ENDPOINT_URL{MEGA_S4_ENDPOINT_URL if MEGA_S4_ENDPOINT_URL else '未設定'}")
     logger.info(f"MEGA_S4_REGION{MEGA_S4_REGION if MEGA_S4_REGION else '未設定'}")

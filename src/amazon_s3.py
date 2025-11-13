@@ -22,6 +22,10 @@ class AmazonS3(BaseStorageClient):
             aws_secret_access_key : AWS Secret Access Key
             aws_session_token : 可選 Session Token（例如臨時憑證）
             region : AWS 區域名稱
+            name : logger 名稱
+            log_level : logger 等級
+            log_max_bytes : logger 檔案最大尺寸
+            log_backup_count : logger 備份檔案數量
         """
         self.client = boto3.client(
             "s3",
@@ -214,89 +218,3 @@ class AmazonS3(BaseStorageClient):
         except Exception as e:
             self.logger.error(f"列出檔案失敗 (prefix={prefix})，原因：{e}")
             return []
-
-    @timed(print_result=False)
-    def download_file_with_resume(self, url: str, file_path: str, print_bar=False, chunk_size=1024000):
-        """斷點續傳下載檔案
-
-        Args:
-            url (str): 網址
-            file_path (str): 檔案位置
-            print_bar (bool, optional): 顯示進度條. Defaults to False.
-            chunk_size (int, optional): 下載chunk大小. Defaults to 1024000.
-
-        Returns:
-            tuple[bool, str]: (是否成功, 訊息)
-        """
-        try:
-            # 檢查已下載的檔案大小
-            if os.path.exists(file_path):
-                try:
-                    file_size = os.path.getsize(file_path)
-                    open_file_mode = 'ab'
-                    r_first = requests.get(url, stream=True, timeout=15)
-                    remote_file_size = int(r_first.headers.get('content-length', 0))
-                    if remote_file_size < file_size:
-                        os.remove(file_path)
-                        open_file_mode = 'wb'
-                        file_size = 0
-                    elif remote_file_size == file_size:
-                        return True, "已是完成下載的檔案"
-                    bpct = True
-                except Exception as err:
-                    msg = f'判斷是否斷點續傳時發生錯誤: {err}, url: {url}'
-                    self.logger.error(msg)
-                    if os.path.exists(file_path):
-                        os.remove(file_path)
-                    return False, msg
-            else:
-                open_file_mode = 'wb'
-                file_size = 0
-                bpct = False
-
-            # 進行下載請求
-            headers = {'Range': f'bytes={file_size}-'} if bpct else {}
-            r = requests.get(url, stream=True, timeout=15, headers=headers)
-            total = int(r.headers.get('content-length', 0))
-
-            if bpct and r.status_code != 206:
-                msg = f"不支援斷點下載，刪除後重載: {file_path} code:{r.status_code}"
-                self.logger.info(msg)
-                os.remove(file_path)
-                r.raise_for_status()
-                return False, msg
-
-            if r.status_code == 404:
-                raise FileExistsError(f'網址錯誤 code 404 url:{url}')
-
-            # 建立目錄
-            os.makedirs(os.path.dirname(file_path), exist_ok=True)
-
-            # 顯示 tqdm 進度條（僅當 print_bar 為 True 時）
-            with open(file_path, open_file_mode) as f:
-                if print_bar:
-                    progress = tqdm(
-                        total=total + file_size,
-                        initial=file_size,
-                        unit='B',
-                        unit_scale=True,
-                        desc=os.path.basename(file_path),
-                        ascii=True
-                    )
-                    for chunk in r.iter_content(chunk_size=chunk_size):
-                        if chunk:
-                            f.write(chunk)
-                            progress.update(len(chunk))
-                    progress.close()
-                else:
-                    for chunk in r.iter_content(chunk_size=chunk_size):
-                        if chunk:
-                            f.write(chunk)
-
-            return True, "ok"
-        except Exception as err:
-            msg = f'下載請求時發生錯誤: {err}'
-            self.logger.error(msg)
-            if os.path.exists(file_path):
-                os.remove(file_path)
-            return False, msg
