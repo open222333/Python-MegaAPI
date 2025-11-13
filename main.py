@@ -10,6 +10,7 @@ from src.mega_s4 import MegaS4
 from src.timer import human_time_ct_str
 from src.timer import timed
 from src.tool import wait_for_user_confirmation, check_required_vars
+from src.telegram import send_telegram_message
 from tqdm import tqdm
 import logging
 import os
@@ -20,7 +21,7 @@ import os
 
 
 @timed(print_result=False)
-def process_file(file_doc, s3_client: AmazonS3, s4_client: MegaS4, s4_bucket, skip_existing=True, dry_run = False, tmp_dir="temp", show_progress=True, logger: logging.Logger = None) -> bool:
+def process_file(file_doc, s3_client: AmazonS3, s4_client: MegaS4, s4_bucket, skip_existing=True, dry_run=False, tmp_dir="temp", show_progress=True, logger: logging.Logger = None) -> bool:
     """
     處理單一檔案：
         Amazon S3 -> 下載到本地 -> 上傳到 Mega S4
@@ -143,6 +144,10 @@ if __name__ == '__main__':
         default=5,
         help='保留的舊日誌檔案數量（預設：5）'
     )
+    log_group.add_argument(
+        '-T', '--enable_telegram_message', action='store_true',
+        help='啟用 Telegram 通知功能'
+    )
     test_group = parser.add_argument_group("test", "測試相關參數")
     test_group.add_argument(
         '-l', '--local_upload_test_file', type=str,
@@ -231,6 +236,9 @@ if __name__ == '__main__':
             logger.error(f"無法載入設定檔：{args.config_path}，錯誤訊息：{e}")
             exit(1)
 
+    TELEGRAM_BOT_TOKEN = conf.get('TELEGRAM', 'TELEGRAM_BOT_TOKEN', fallback=None)
+    TELEGRAM_CHAT_ID = conf.get('TELEGRAM', 'TELEGRAM_CHAT_ID', fallback=None)
+
     MONGO_HOST = conf.get('MONGO', 'MONGO_HOST', fallback="127.0.0.1")
     MONGO_PORT = conf.get('MONGO', 'MONGO_PORT', fallback="27017")
     MONGO_DATABASE_NAME = conf.get('MONGO', 'MONGO_DATABASE_NAME', fallback=None)
@@ -289,6 +297,9 @@ if __name__ == '__main__':
     logger.info(f"MONGO 資料庫: {MONGO_DATABASE_NAME}")
     logger.info(f"MONGO 集合: {MONGO_COLLECTION_NAME}")
     logger.info(f"MONGO Metadata 集合: {MONGO_METADATA_COLLECTION_NAME}")
+    logger.info("=== Telegram 設定 ===")
+    logger.info(f"TELEGRAM_BOT_TOKEN: {'已設定' if TELEGRAM_BOT_TOKEN else '未設定'}")
+    logger.info(f"TELEGRAM_CHAT_ID: {'已設定' if TELEGRAM_CHAT_ID else '未設定'}")
     logger.info("=====================")
 
     if args.local_upload_test_file:
@@ -324,6 +335,7 @@ if __name__ == '__main__':
     )
 
     if args.local_upload_test_file:
+        # 測試 mega 上傳
         logger.info("進入本地測試上傳檔案處理模式。")
         upload_result, upload_sec = mega_s4.upload_file(
             bucket_name=MEGA_S4_BUCKET_NAME,
@@ -376,6 +388,7 @@ if __name__ == '__main__':
                             now_datetime = datetime.now()
                             metadata = {
                                 "code": data.get("code"),
+                                "origin": data.get("origin"),
                                 "remote_key": data.get("remote_key"),
                                 "status": "pending",
                                 "status_updated_at": now_datetime,
@@ -417,3 +430,9 @@ if __name__ == '__main__':
                         pass
 
                 logger.info("全部檔案處理完成")
+                send_telegram_message(
+                    message=f"MegaAPI 檔案處理完成，共處理 {total_files} 筆檔案。",
+                    bot_token=TELEGRAM_BOT_TOKEN,
+                    chat_id=TELEGRAM_CHAT_ID,
+                    send=args.enable_telegram_message
+                )
