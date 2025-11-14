@@ -365,7 +365,7 @@ if __name__ == '__main__':
     logger.info(f"最大工作緒數：{args.max_workers}")
     logger.info(f"失敗重試次數：{args.max_retries}")
     logger.info(f"每次處理文件數量：{args.per_count}")
-    logger.info(f"下載方式：{"透過 s3 金鑰" if args.download_type == "s3" else '斷點續傳下載'}")
+    logger.info(f"下載方式：{'透過 s3 金鑰' if args.download_type == 's3' else '斷點續傳下載'}")
     logger.info("=== MegaS4 設定 ===")
     logger.info(f"MEGA_S4_ENDPOINT_URL{MEGA_S4_ENDPOINT_URL if MEGA_S4_ENDPOINT_URL else '未設定'}")
     logger.info(f"MEGA_S4_REGION{MEGA_S4_REGION if MEGA_S4_REGION else '未設定'}")
