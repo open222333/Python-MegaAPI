@@ -104,13 +104,13 @@ class MegaS4(BaseStorageClient):
 
                 # 使用 boto3 的 Callback 參數
                 self.client.upload_file(
-                    local_file_path,
-                    bucket_name,
-                    remote_key,
+                    Filename=local_file_path,
+                    Bucket=bucket_name,
+                    Key=remote_key,
                     Callback=progress_hook,
                 )
 
-            self.logger.info(f"已上傳: {local_file_path} → s3://{bucket_name}/{remote_key}")
+            self.logger.info(f"已上傳: {local_file_path} → s4://{bucket_name}/{remote_key}")
             return True
 
         except (ClientError, BotoCoreError) as e:

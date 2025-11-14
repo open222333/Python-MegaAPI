@@ -6,7 +6,6 @@ from tqdm import tqdm
 import boto3
 import logging
 import os
-import requests
 
 
 class AmazonS3(BaseStorageClient):
