@@ -13,7 +13,7 @@ class AmazonS3(BaseStorageClient):
     """ Amazon S3 客戶端，用於下載及刪除檔案。 """
 
     def __init__(
-            self, aws_access_key_id: str, aws_secret_access_key: str, aws_session_token: str, region: str, name="AmazonS3", log_level="INFO", log_max_bytes=5*1024*1024, log_backup_count=3):
+            self, aws_access_key_id: str, aws_secret_access_key: str, region: str, aws_session_token: str = None, name="AmazonS3", log_level="INFO", log_max_bytes=5*1024*1024, log_backup_count=3):
         """
         初始化 S3Downloader。
 
