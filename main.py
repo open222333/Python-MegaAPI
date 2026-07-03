@@ -4,7 +4,7 @@ from logging.handlers import RotatingFileHandler
 from src.amazon_s3 import AmazonS3
 from src.mega_s4 import MegaS4
 from src.timer import human_time_ct_str
-from src.tool import wait_for_user_confirmation, check_required_vars
+from src.tool import wait_for_user_confirmation, check_required_vars, log_config_summary
 import logging
 import os
 
@@ -186,35 +186,41 @@ if __name__ == '__main__':
 
     check_required_vars(required_vars, logger)
 
-    logger.info("=== 參數設定確認 ===")
-    logger.info(f"設定檔路徑：{args.config_path}")
-    logger.info(f"日誌等級：{args.log_level}")
-    logger.info(f"日誌檔路徑：{args.log_path if not args.no_file else '無'}")
-    logger.info(f"本地測試檔案：{args.local_upload_test_file if args.local_upload_test_file else '無'}")
-    logger.info(f"測試代碼參數：{args.code if args.code else '無'}")
-    logger.info(f"模擬執行：{'是' if args.dry_run else '否'}")
-    logger.info(f"跳過已存在檔案：{'是' if args.skip_existing else '否'}")
-    logger.info(f"最大工作緒數：{args.max_workers}")
-    logger.info(f"失敗重試次數：{args.max_retries}")
-    logger.info(f"每次處理文件數量：{args.per_count}")
-    logger.info(f"下載方式：{'透過 s3 金鑰' if args.download_type == 's3' else '斷點續傳下載'}")
-    logger.info("=== MegaS4 設定 ===")
-    logger.info(f"MEGA_S4_ENDPOINT_URL：{MEGA_S4_ENDPOINT_URL if MEGA_S4_ENDPOINT_URL else '未設定'}")
-    logger.info(f"MEGA_S4_REGION：{MEGA_S4_REGION if MEGA_S4_REGION else '未設定'}")
-    logger.info(f"MEGA_S4_BUCKET_NAME：{MEGA_S4_BUCKET_NAME if MEGA_S4_BUCKET_NAME else '未設定'}")
-    logger.info("=== AmazonS3 設定 ===")
-    logger.info(f"AMAZON_S3_REGION：{AMAZON_S3_REGION if AMAZON_S3_REGION else '未設定'}")
-    logger.info(f"AMAZON_S3_BUCKET_NAME：{AMAZON_S3_BUCKET_NAME if AMAZON_S3_BUCKET_NAME else '未設定'}")
-    logger.info(f"AMAZON_S3_URL：{AMAZON_S3_URL if AMAZON_S3_URL else '未設定'}")
-    logger.info("=== MongoDB 設定 ===")
-    logger.info(f"MONGO 主機：{MONGO_HOST}:{MONGO_PORT}")
-    logger.info(f"MONGO 資料庫：{MONGO_DATABASE_NAME}")
-    logger.info(f"MONGO 集合：{MONGO_COLLECTION_NAME}")
-    logger.info(f"MONGO Metadata 集合：{MONGO_METADATA_COLLECTION_NAME}")
-    logger.info("=== Telegram 設定 ===")
-    logger.info(f"TELEGRAM_BOT_TOKEN：{'已設定' if TELEGRAM_BOT_TOKEN else '未設定'}")
-    logger.info(f"TELEGRAM_CHAT_ID：{'已設定' if TELEGRAM_CHAT_ID else '未設定'}")
-    logger.info("=====================")
+    log_config_summary(logger, {
+        "參數設定確認": [
+            ("設定檔路徑", args.config_path),
+            ("日誌等級", args.log_level),
+            ("日誌檔路徑", args.log_path if not args.no_file else "無"),
+            ("本地測試檔案", args.local_upload_test_file or "無"),
+            ("測試代碼參數", args.code or "無"),
+            ("模擬執行", "是" if args.dry_run else "否"),
+            ("跳過已存在檔案", "是" if args.skip_existing else "否"),
+            ("最大工作緒數", args.max_workers),
+            ("失敗重試次數", args.max_retries),
+            ("每次處理文件數量", args.per_count),
+            ("下載方式", "透過 s3 金鑰" if args.download_type == "s3" else "斷點續傳下載"),
+        ],
+        "MegaS4 設定": [
+            ("MEGA_S4_ENDPOINT_URL", MEGA_S4_ENDPOINT_URL or "未設定"),
+            ("MEGA_S4_REGION", MEGA_S4_REGION or "未設定"),
+            ("MEGA_S4_BUCKET_NAME", MEGA_S4_BUCKET_NAME or "未設定"),
+        ],
+        "AmazonS3 設定": [
+            ("AMAZON_S3_REGION", AMAZON_S3_REGION or "未設定"),
+            ("AMAZON_S3_BUCKET_NAME", AMAZON_S3_BUCKET_NAME or "未設定"),
+            ("AMAZON_S3_URL", AMAZON_S3_URL or "未設定"),
+        ],
+        "MongoDB 設定": [
+            ("MONGO 主機", f"{MONGO_HOST}:{MONGO_PORT}"),
+            ("MONGO 資料庫", MONGO_DATABASE_NAME),
+            ("MONGO 集合", MONGO_COLLECTION_NAME),
+            ("MONGO Metadata 集合", MONGO_METADATA_COLLECTION_NAME),
+        ],
+        "Telegram 設定": [
+            ("TELEGRAM_BOT_TOKEN", "已設定" if TELEGRAM_BOT_TOKEN else "未設定"),
+            ("TELEGRAM_CHAT_ID", "已設定" if TELEGRAM_CHAT_ID else "未設定"),
+        ],
+    })
 
     if args.local_upload_test_file:
         if not os.path.isfile(args.local_upload_test_file):
@@ -239,7 +245,7 @@ if __name__ == '__main__':
         log_backup_count=args.backup_count
     )
 
-    awason_s3 = AmazonS3(
+    amazon_s3 = AmazonS3(
         aws_access_key_id=AMAZON_S3_ACCESS_KEY,
         aws_secret_access_key=AMAZON_S3_SECRET_KEY,
         region=AMAZON_S3_REGION,

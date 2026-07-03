@@ -6,6 +6,20 @@ import shutil
 import tarfile
 
 
+def log_config_summary(logger: logging.Logger, sections: dict):
+    """在執行前印出所有參數供人工核對。
+
+    Args:
+        logger: 日誌記錄器
+        sections: {section_title: [(label, value), ...]}
+    """
+    for section_title, items in sections.items():
+        logger.info(f"=== {section_title} ===")
+        for label, value in items:
+            logger.info(f"{label}：{value}")
+    logger.info("=" * 21)
+
+
 def wait_for_user_confirmation(logger: logging.Logger = None, always_yes: bool = False, sleep_seconds: int = 10):
     while True:
         if always_yes:
